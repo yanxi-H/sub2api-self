@@ -38,11 +38,15 @@ const messages: Record<string, string> = {
   'keys.allGroups': 'All Groups',
   'keys.allStatus': 'All Status',
   'keys.columnSettings': 'Column Settings',
+  'keys.copyToClipboard': 'Copy to clipboard',
+  'keys.copied': 'Copied!',
   'keys.createKey': 'Create API Key',
   'keys.created': 'Created',
+  'keys.createFirstKey': 'Create your first API key to get started with the API.',
   'keys.expiresAt': 'Expires',
   'keys.group': 'Group',
   'keys.lastUsedAt': 'Last Used',
+  'keys.readOnlyEmptyDescription': 'API keys are created and managed by administrators. Contact an administrator if you need access.',
   'keys.rateLimitColumn': 'Rate Limit',
   'keys.searchPlaceholder': 'Search name or key...',
   'keys.status.active': 'Active',
@@ -153,7 +157,11 @@ const DataTableStub = {
     <div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div v-for="row in data" :key="row.id">
+        <slot name="cell-key" :value="row.key" :row="row" />
         <slot name="cell-name" :value="row.name" :row="row" />
+        <slot name="cell-group" :row="row" />
+        <slot name="cell-rate_limit" :row="row" />
+        <slot name="cell-actions" :row="row" />
       </div>
       <slot name="empty" />
     </div>
@@ -177,6 +185,18 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
+const EmptyStateStub = {
+  props: ['title', 'description', 'actionText'],
+  emits: ['action'],
+  template: `
+    <div data-test="empty-state">
+      <span>{{ title }}</span>
+      <span>{{ description }}</span>
+      <button v-if="actionText" @click="$emit('action')">{{ actionText }}</button>
+    </div>
+  `,
+}
+
 const mountView = async () => {
   const wrapper = mount(KeysView, {
     global: {
@@ -187,7 +207,7 @@ const mountView = async () => {
         Pagination: true,
         BaseDialog: true,
         ConfirmDialog: true,
-        EmptyState: true,
+        EmptyState: EmptyStateStub,
         Select: SelectStub,
         SearchInput: SearchInputStub,
         Icon: IconStub,
@@ -255,8 +275,8 @@ describe('user KeysView column settings', () => {
       'expires_at',
       'status',
       'created_at',
-      'actions',
     ])
+    expect(visibleColumnKeys(wrapper)).not.toContain('actions')
     expect(visibleColumnKeys(wrapper)).not.toContain('rate_limit')
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_at')
   })
@@ -287,7 +307,6 @@ describe('user KeysView column settings', () => {
       'expires_at',
       'status',
       'last_used_at',
-      'actions',
     ])
   })
 
@@ -302,5 +321,22 @@ describe('user KeysView column settings', () => {
     expect(columnMenuText).toContain('Rate Limit')
     expect(columnMenuText).not.toContain('Name')
     expect(columnMenuText).not.toContain('Actions')
+  })
+
+  it('keeps regular users read-only while allowing API key copy', async () => {
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).not.toContain('Create API Key')
+    expect(wrapper.text()).not.toContain('Use Key')
+    expect(wrapper.text()).not.toContain('Import to CCS')
+    expect(wrapper.text()).not.toContain('Enable')
+    expect(wrapper.text()).not.toContain('Disable')
+    expect(wrapper.text()).not.toContain('Edit')
+    expect(wrapper.text()).not.toContain('Delete')
+
+    const copyButton = wrapper.get('button[title="Copy to clipboard"]')
+    await copyButton.trigger('click')
+
+    expect(copyToClipboard).toHaveBeenCalledWith('sk-test-key', 'Copied!')
   })
 })
