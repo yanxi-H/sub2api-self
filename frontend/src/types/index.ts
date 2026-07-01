@@ -578,6 +578,13 @@ export interface ApiKey {
   created_at: string
   updated_at: string
   group?: Group
+  user?: {
+    id: number
+    username: string
+    email: string
+    role: string
+    status: string
+  }
   rate_limit_5h: number
   rate_limit_1d: number
   rate_limit_7d: number
@@ -603,6 +610,7 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  user_id?: number // 管理员指定：Key 归属的目标用户（不填则归属操作者本人）
 }
 
 export interface UpdateApiKeyRequest {
@@ -618,6 +626,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+  user_id?: number // 管理员修改：Key 的归属用户
 }
 
 export interface CreateGroupRequest {

@@ -42,6 +42,9 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h *float64 `json:"rate_limit_5h"`
 	RateLimit1d *float64 `json:"rate_limit_1d"`
 	RateLimit7d *float64 `json:"rate_limit_7d"`
+
+	// 管理员指定：Key 归属的目标用户。仅管理员可使用；普通用户传入会被忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -60,6 +63,9 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
+
+	// 管理员修改：Key 的归属用户。仅管理员可使用；普通用户传入会被忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // List handles listing user's API keys with pagination
@@ -95,6 +101,18 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		}
 	}
 
+	// 管理员走全局视图：不按调用者 userID 过滤，列出全系统所有用户的 Key。
+	// user_id 筛选参数仅对管理员生效，普通用户传入会被忽略以防越权。
+	isAdmin := isAdminRole(c)
+	if isAdmin {
+		filters.AdminMode = true
+		if userIDStr := c.Query("user_id"); userIDStr != "" {
+			if uid, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
+				filters.UserID = &uid
+			}
+		}
+	}
+
 	keys, result, err := h.apiKeyService.List(c.Request.Context(), subject.UserID, params, filters)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -106,6 +124,20 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		out = append(out, *dto.APIKeyFromService(&keys[i]))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+// isAdminRole 报告当前请求的登录用户是否为管理员。
+func isAdminRole(c *gin.Context) bool {
+	role, ok := middleware2.GetUserRoleFromContext(c)
+	return ok && role == service.RoleAdmin
+}
+
+func requireAdminAPIKeyManagement(c *gin.Context) bool {
+	if isAdminRole(c) {
+		return true
+	}
+	response.Forbidden(c, "Only administrators can manage API keys")
+	return false
 }
 
 // GetByID handles getting a single API key
@@ -129,8 +161,8 @@ func (h *APIKeyHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	// 验证所有权
-	if key.UserID != subject.UserID {
+	// 验证所有权（管理员可查看任意用户的 Key）
+	if !isAdminRole(c) && key.UserID != subject.UserID {
 		response.NotFound(c, "API key not found")
 		return
 	}
@@ -144,6 +176,9 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !requireAdminAPIKeyManagement(c) {
 		return
 	}
 
@@ -174,8 +209,21 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		svcReq.RateLimit7d = *req.RateLimit7d
 	}
 
+	// 解析目标归属用户：管理员指定了 user_id 则归属该用户，否则归属操作者本人。
+	isAdmin := isAdminRole(c)
+	targetUserID := subject.UserID
+	if isAdmin && req.UserID != nil {
+		targetUserID = *req.UserID
+	}
+
 	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
+		var key *service.APIKey
+		var err error
+		if isAdmin {
+			key, err = h.apiKeyService.CreateAsAdmin(ctx, targetUserID, svcReq)
+		} else {
+			key, err = h.apiKeyService.Create(ctx, targetUserID, svcReq)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -189,6 +237,9 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !requireAdminAPIKeyManagement(c) {
 		return
 	}
 
@@ -237,6 +288,21 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		}
 	}
 
+	// 管理员修改归属用户：透传给 service，仅 UpdateAsAdmin 路径会使用。
+	if isAdminRole(c) && req.UserID != nil {
+		svcReq.UserID = req.UserID
+	}
+
+	if isAdminRole(c) {
+		key, err := h.apiKeyService.UpdateAsAdmin(c.Request.Context(), keyID, subject.UserID, svcReq)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.Success(c, dto.APIKeyFromService(key))
+		return
+	}
+
 	key, err := h.apiKeyService.Update(c.Request.Context(), keyID, subject.UserID, svcReq)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -254,6 +320,9 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
+	if !requireAdminAPIKeyManagement(c) {
+		return
+	}
 
 	keyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -261,7 +330,11 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	err = h.apiKeyService.Delete(c.Request.Context(), keyID, subject.UserID)
+	if isAdminRole(c) {
+		err = h.apiKeyService.DeleteAsAdmin(c.Request.Context(), keyID, subject.UserID)
+	} else {
+		err = h.apiKeyService.Delete(c.Request.Context(), keyID, subject.UserID)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

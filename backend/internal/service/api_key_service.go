@@ -60,6 +60,9 @@ type APIKeyRepository interface {
 	DeleteWithAudit(ctx context.Context, id int64) error
 
 	ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error)
+	// ListAll 列出全系统所有用户的 API Key（管理员全局视图）。
+	// 当 filters.UserID 非 nil 时仅返回该用户的 Key，否则返回全部。
+	ListAll(ctx context.Context, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error)
 	VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error)
 	CountByUserID(ctx context.Context, userID int64) (int64, error)
 	ExistsByKey(ctx context.Context, key string) (bool, error)
@@ -166,6 +169,10 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+
+	// 管理员指定:Key 归属的目标用户。不填(由 handler fallback)则归属操作者本人。
+	// 仅 CreateAsAdmin 路径会使用它;普通 Create 路径忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -187,6 +194,9 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
+
+	// 管理员修改归属用户(nil = 不修改)。仅 UpdateAsAdmin 路径生效;普通 Update 忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // APIKeyService API Key服务
@@ -328,8 +338,18 @@ func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group 
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
-// Create 创建API Key
+// Create 创建API Key（归属由传入的 userID 决定，普通用户路径 userID 即调用者本人）。
 func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	return s.createAPIKey(ctx, userID, req, false)
+}
+
+// CreateAsAdmin 以管理员身份创建API Key：跳过「目标用户能否绑定分组」的校验，
+// 且跳过自定义 Key 的创建限流。归属 userID 由 handler 解析后传入（可能是目标用户而非管理员自己）。
+func (s *APIKeyService) CreateAsAdmin(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	return s.createAPIKey(ctx, userID, req, true)
+}
+
+func (s *APIKeyService) createAPIKey(ctx context.Context, userID int64, req CreateAPIKeyRequest, isAdmin bool) (*APIKey, error) {
 	// 验证用户存在
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -350,15 +370,14 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	// 验证分组权限（如果指定了分组）
+	// 验证分组权限（如果指定了分组）。管理员跳过：可把任意分组指定给任意用户的 Key。
 	if req.GroupID != nil {
 		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
 		if err != nil {
 			return nil, fmt.Errorf("get group: %w", err)
 		}
 
-		// 检查用户是否可以绑定该分组
-		if !s.canUserBindGroup(ctx, user, group) {
+		if !isAdmin && !s.canUserBindGroup(ctx, user, group) {
 			return nil, ErrGroupNotAllowed
 		}
 	}
@@ -367,9 +386,11 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 判断是否使用自定义Key
 	if req.CustomKey != nil && *req.CustomKey != "" {
-		// 检查限流（仅对自定义key进行限流）
-		if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
-			return nil, err
+		// 检查限流（仅对自定义key进行限流）。管理员代建跳过限流。
+		if !isAdmin {
+			if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
+				return nil, err
+			}
 		}
 
 		// 验证自定义Key格式
@@ -432,6 +453,15 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 // List 获取用户的API Key列表
 func (s *APIKeyService) List(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
+	// 管理员全局模式：不按调用者 userID 过滤，列出全系统所有用户的 Key
+	// （filters.UserID 非 nil 时仅列出该用户）。普通用户保持原有按自身 userID 过滤的逻辑。
+	if filters.AdminMode {
+		keys, pagination, err := s.apiKeyRepo.ListAll(ctx, params, filters)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list api keys: %w", err)
+		}
+		return keys, pagination, nil
+	}
 	keys, pagination, err := s.apiKeyRepo.ListByUserID(ctx, userID, params, filters)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list api keys: %w", err)
@@ -515,13 +545,23 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 
 // Update 更新API Key
 func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest) (*APIKey, error) {
+	return s.updateAPIKey(ctx, id, userID, req, false)
+}
+
+// UpdateAsAdmin 以管理员身份更新API Key：跳过所有权校验，且修改分组时跳过
+// 「目标用户是否有权绑定该分组」的校验，使管理员可像管理自己 Key 一样管理任意用户的 Key。
+func (s *APIKeyService) UpdateAsAdmin(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest) (*APIKey, error) {
+	return s.updateAPIKey(ctx, id, userID, req, true)
+}
+
+func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest, isAdmin bool) (*APIKey, error) {
 	apiKey, err := s.apiKeyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get api key: %w", err)
 	}
 
-	// 验证所有权
-	if apiKey.UserID != userID {
+	// 验证所有权（管理员跳过）
+	if !isAdmin && apiKey.UserID != userID {
 		return nil, ErrInsufficientPerms
 	}
 
@@ -545,22 +585,32 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	}
 
 	if req.GroupID != nil {
-		// 验证分组权限
-		user, err := s.userRepo.GetByID(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("get user: %w", err)
-		}
+		// 验证分组权限（管理员跳过：可把任意分组指定给任意用户的 Key）
+		if !isAdmin {
+			user, err := s.userRepo.GetByID(ctx, userID)
+			if err != nil {
+				return nil, fmt.Errorf("get user: %w", err)
+			}
 
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
-		if err != nil {
-			return nil, fmt.Errorf("get group: %w", err)
-		}
+			group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
+			if err != nil {
+				return nil, fmt.Errorf("get group: %w", err)
+			}
 
-		if !s.canUserBindGroup(ctx, user, group) {
-			return nil, ErrGroupNotAllowed
+			if !s.canUserBindGroup(ctx, user, group) {
+				return nil, ErrGroupNotAllowed
+			}
 		}
 
 		apiKey.GroupID = req.GroupID
+	}
+
+	// 管理员修改归属用户：校验目标用户存在后转移归属。普通用户路径忽略此字段。
+	if isAdmin && req.UserID != nil {
+		if _, err := s.userRepo.GetByID(ctx, *req.UserID); err != nil {
+			return nil, fmt.Errorf("get target user: %w", err)
+		}
+		apiKey.UserID = *req.UserID
 	}
 
 	if req.Status != nil {
@@ -641,13 +691,22 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 
 // Delete 删除API Key
 func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) error {
+	return s.deleteAPIKey(ctx, id, userID, false)
+}
+
+// DeleteAsAdmin 以管理员身份删除API Key：跳过所有权校验。
+func (s *APIKeyService) DeleteAsAdmin(ctx context.Context, id int64, userID int64) error {
+	return s.deleteAPIKey(ctx, id, userID, true)
+}
+
+func (s *APIKeyService) deleteAPIKey(ctx context.Context, id int64, userID int64, isAdmin bool) error {
 	key, ownerID, err := s.apiKeyRepo.GetKeyAndOwnerID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get api key: %w", err)
 	}
 
-	// 验证当前用户是否为该 API Key 的所有者
-	if ownerID != userID {
+	// 验证当前用户是否为该 API Key 的所有者（管理员跳过）
+	if !isAdmin && ownerID != userID {
 		return ErrInsufficientPerms
 	}
 
@@ -658,7 +717,7 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 
 	// 删除成功后再清理缓存,避免"缓存已清但删除失败"的竞态。
 	if s.cache != nil {
-		_ = s.cache.DeleteCreateAttemptCount(ctx, userID)
+		_ = s.cache.DeleteCreateAttemptCount(ctx, ownerID)
 	}
 	s.InvalidateAuthCacheByKey(ctx, key)
 	s.lastUsedTouchL1.Delete(id)

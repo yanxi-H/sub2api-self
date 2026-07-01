@@ -6,7 +6,7 @@
           <div class="flex flex-wrap items-center gap-3">
             <SearchInput
               v-model="filterSearch"
-              :placeholder="t('keys.searchPlaceholder')"
+              :placeholder="isAdmin ? t('keys.searchPlaceholderAdmin') : t('keys.searchPlaceholder')"
               class="w-full sm:w-64"
               @search="onFilterChange"
             />
@@ -73,7 +73,12 @@
               </button>
             </div>
           </div>
-          <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
+          <button
+            v-if="isAdmin"
+            @click="showCreateModal = true"
+            class="btn btn-primary"
+            data-tour="keys-create-btn"
+          >
             <Icon name="plus" size="md" class="mr-2" />
             {{ t('keys.createKey') }}
           </button>
@@ -116,6 +121,19 @@
             </div>
           </template>
 
+          <template #cell-owner="{ row }">
+            <div class="flex flex-col">
+              <span class="font-medium text-gray-900 dark:text-white">
+                {{ row.user?.username || '—' }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ row.user?.email || '' }}</span>
+              <span class="text-xs text-gray-400 dark:text-dark-500">
+                ID: {{ row.user_id }}
+                <span v-if="row.user?.role" class="ml-1">· {{ row.user.role }}</span>
+              </span>
+            </div>
+          </template>
+
           <template #cell-name="{ value, row }">
             <div class="flex items-center gap-1.5">
               <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
@@ -132,6 +150,7 @@
           <template #cell-group="{ row }">
             <div class="group/dropdown relative">
               <button
+                v-if="isAdmin"
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
@@ -163,6 +182,19 @@
                   />
                 </svg>
               </button>
+              <div v-else class="flex items-center gap-2">
+                <GroupBadge
+                  v-if="row.group"
+                  :name="row.group.name"
+                  :platform="row.group.platform"
+                  :subscription-type="row.group.subscription_type"
+                  :rate-multiplier="row.group.rate_multiplier"
+                  :user-rate-multiplier="userGroupRates[row.group.id]"
+                />
+                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
+                  t('keys.noGroup')
+                }}</span>
+              </div>
             </div>
           </template>
 
@@ -296,7 +328,7 @@
               </div>
               <!-- Reset button -->
               <button
-                v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
+                v-if="isAdmin && (row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0)"
                 @click.stop="confirmResetRateLimitFromTable(row)"
                 class="mt-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                 :title="t('keys.resetRateLimitUsage')"
@@ -341,7 +373,7 @@
             <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
           </template>
 
-          <template #cell-actions="{ row }">
+          <template v-if="isAdmin" #cell-actions="{ row }">
             <div class="flex items-center gap-1">
               <!-- Use Key Button -->
               <button
@@ -396,8 +428,8 @@
           <template #empty>
             <EmptyState
               :title="t('keys.noKeysYet')"
-              :description="t('keys.createFirstKey')"
-              :action-text="t('keys.createKey')"
+              :description="isAdmin ? t('keys.createFirstKey') : t('keys.readOnlyEmptyDescription')"
+              :action-text="isAdmin ? t('keys.createKey') : undefined"
               @action="showCreateModal = true"
             />
           </template>
@@ -418,6 +450,7 @@
 
     <!-- Create/Edit Modal -->
     <BaseDialog
+      v-if="isAdmin"
       :show="showCreateModal || showEditModal"
       :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
       width="normal"
@@ -434,6 +467,19 @@
             :placeholder="t('keys.namePlaceholder')"
             data-tour="key-form-name"
           />
+        </div>
+
+        <div>
+          <label class="input-label">{{ t('keys.ownerLabel') }}</label>
+          <Select
+            :model-value="formData.user_id"
+            :options="userOptions"
+            :placeholder="t('keys.selectOwner')"
+            :searchable="true"
+            :search-placeholder="t('keys.searchUser')"
+            @update:model-value="(v: string | number | boolean | null) => (formData.user_id = v === null ? null : Number(v))"
+          />
+          <p class="input-hint">{{ t('keys.ownerHint') }}</p>
         </div>
 
         <div>
@@ -918,6 +964,7 @@
 
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
+      v-if="isAdmin"
       :show="showDeleteDialog"
       :title="t('keys.deleteKey')"
       :message="t('keys.deleteConfirmMessage', { name: selectedKey?.name })"
@@ -930,6 +977,7 @@
 
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
+      v-if="isAdmin"
       :show="showResetQuotaDialog"
       :title="t('keys.resetQuotaTitle')"
       :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: selectedKey?.quota_used?.toFixed(4) })"
@@ -942,6 +990,7 @@
 
     <!-- Reset Rate Limit Confirmation Dialog -->
     <ConfirmDialog
+      v-if="isAdmin"
       :show="showResetRateLimitDialog"
       :title="t('keys.resetRateLimitTitle')"
       :message="t('keys.resetRateLimitConfirmMessage', { name: selectedKey?.name })"
@@ -1012,7 +1061,7 @@
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
     <Teleport to="body">
       <div
-        v-if="groupSelectorKeyId !== null && dropdownPosition"
+        v-if="isAdmin && groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
         class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max min-w-[380px] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
@@ -1077,30 +1126,31 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
-	import { useI18n } from 'vue-i18n'
-	import { useAppStore } from '@/stores/app'
-	import { useOnboardingStore } from '@/stores/onboarding'
-	import { useClipboard } from '@/composables/useClipboard'
+import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
+import { useOnboardingStore } from '@/stores/onboarding'
+import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
-import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import { keysAPI, authAPI, usageAPI, userGroupsAPI, adminAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-	import DataTable from '@/components/common/DataTable.vue'
-	import Pagination from '@/components/common/Pagination.vue'
-	import BaseDialog from '@/components/common/BaseDialog.vue'
-	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-	import EmptyState from '@/components/common/EmptyState.vue'
-	import Select from '@/components/common/Select.vue'
-	import SearchInput from '@/components/common/SearchInput.vue'
-	import Icon from '@/components/icons/Icon.vue'
-	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
-	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
-	import GroupBadge from '@/components/common/GroupBadge.vue'
-	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import DataTable from '@/components/common/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Select from '@/components/common/Select.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import Icon from '@/components/icons/Icon.vue'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+import EndpointPopover from '@/components/keys/EndpointPopover.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
+import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1128,21 +1178,35 @@ interface GroupOption {
 }
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
-const allColumns = computed<Column[]>(() => [
-  { key: 'name', label: t('common.name'), sortable: true },
-  { key: 'key', label: t('keys.apiKey'), sortable: false },
-  { key: 'group', label: t('keys.group'), sortable: false },
-  { key: 'usage', label: t('keys.usage'), sortable: false },
-  { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
-  { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
-  { key: 'status', label: t('common.status'), sortable: true },
-  { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
-  { key: 'created_at', label: t('keys.created'), sortable: true },
-  { key: 'actions', label: t('common.actions'), sortable: false }
-])
+// 管理员在该页面查看/管理全系统所有用户的 API Key
+const isAdmin = computed(() => authStore.isAdmin)
+
+const allColumns = computed<Column[]>(() => {
+  const cols: Column[] = []
+  // 管理员视图：在最前展示「所属用户」列，便于区分每条 Key 属于哪个用户
+  if (isAdmin.value) {
+    cols.push({ key: 'owner', label: t('keys.ownerColumn'), sortable: false })
+  }
+  cols.push(
+    { key: 'name', label: t('common.name'), sortable: true },
+    { key: 'key', label: t('keys.apiKey'), sortable: false },
+    { key: 'group', label: t('keys.group'), sortable: false },
+    { key: 'usage', label: t('keys.usage'), sortable: false },
+    { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
+    { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
+    { key: 'status', label: t('common.status'), sortable: true },
+    { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
+    { key: 'created_at', label: t('keys.created'), sortable: true }
+  )
+  if (isAdmin.value) {
+    cols.push({ key: 'actions', label: t('common.actions'), sortable: false })
+  }
+  return cols
+})
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(['name', 'actions'])
 const DEFAULT_HIDDEN_COLUMNS = ['rate_limit', 'last_used_at']
@@ -1265,6 +1329,7 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 
 const formData = ref({
   name: '',
+  user_id: null as number | null, // 管理员指定归属用户(null = 归属管理员自己)
   group_id: null as number | null,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
@@ -1356,6 +1421,21 @@ const groupOptions = computed(() =>
   }))
 )
 
+// 归属用户下拉选项（管理员分配 Key 时使用）。仅管理员加载一次全量用户列表。
+const userOptions = ref<{ value: number; label: string }[]>([])
+const loadUserOptions = async () => {
+  if (!isAdmin.value || userOptions.value.length > 0) return
+  try {
+    const res = await adminAPI.users.list(1, 200, {})
+    userOptions.value = res.items.map((u) => ({
+      value: u.id,
+      label: `${u.username} (${u.email})`
+    }))
+  } catch (e) {
+    console.error('Failed to load user options:', e)
+  }
+}
+
 // Group dropdown search
 const groupSearchQuery = ref('')
 const filteredGroupOptions = computed(() => {
@@ -1439,7 +1519,9 @@ const loadApiKeys = async () => {
 
 const loadGroups = async () => {
   try {
-    groups.value = await userGroupsAPI.getAvailable()
+    groups.value = isAdmin.value
+      ? await adminAPI.groups.getAllIncludingInactive()
+      : await userGroupsAPI.getAvailable()
   } catch (error) {
     console.error('Failed to load groups:', error)
   }
@@ -1490,11 +1572,13 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const editKey = (key: ApiKey) => {
+  if (!isAdmin.value) return
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
   formData.value = {
     name: key.name,
+    user_id: key.user_id ?? null,
     group_id: key.group_id,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
@@ -1516,6 +1600,7 @@ const editKey = (key: ApiKey) => {
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {
+  if (!isAdmin.value) return
   const newStatus = key.status === 'active' ? 'inactive' : 'active'
   try {
     await keysAPI.toggleStatus(key.id, newStatus)
@@ -1529,6 +1614,7 @@ const toggleKeyStatus = async (key: ApiKey) => {
 }
 
 const openGroupSelector = (key: ApiKey) => {
+  if (!isAdmin.value) return
   if (groupSelectorKeyId.value === key.id) {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
@@ -1560,6 +1646,7 @@ const openGroupSelector = (key: ApiKey) => {
 }
 
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+  if (!isAdmin.value) return
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
   if (key.group_id === newGroupId) return
@@ -1586,11 +1673,13 @@ const closeGroupSelector = (event: MouseEvent) => {
 }
 
 const confirmDelete = (key: ApiKey) => {
+  if (!isAdmin.value) return
   selectedKey.value = key
   showDeleteDialog.value = true
 }
 
 const handleSubmit = async () => {
+  if (!isAdmin.value) return
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
@@ -1661,6 +1750,10 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
+      // 管理员修改归属用户：仅当变更时才提交
+      if (formData.value.user_id !== null && formData.value.user_id !== selectedKey.value.user_id) {
+        updates.user_id = formData.value.user_id
+      }
       await keysAPI.update(selectedKey.value.id, updates)
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
@@ -1673,7 +1766,8 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        formData.value.user_id ?? undefined
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1698,6 +1792,7 @@ const handleSubmit = async () => {
  * 若后端未返回消息则显示默认的国际化文本
  */
 const handleDelete = async () => {
+  if (!isAdmin.value) return
   if (!selectedKey.value) return
 
   try {
@@ -1718,6 +1813,7 @@ const closeModals = () => {
   selectedKey.value = null
   formData.value = {
     name: '',
+    user_id: null,
     group_id: null,
     status: 'active',
     use_custom_key: false,
@@ -1739,6 +1835,7 @@ const closeModals = () => {
 
 // Show reset quota confirmation dialog
 const confirmResetQuota = () => {
+  if (!isAdmin.value) return
   showResetQuotaDialog.value = true
 }
 
@@ -1752,6 +1849,7 @@ const setExpirationDays = (days: number) => {
 
 // Reset quota used for an API key
 const resetQuotaUsed = async () => {
+  if (!isAdmin.value) return
   if (!selectedKey.value) return
   showResetQuotaDialog.value = false
   try {
@@ -1769,17 +1867,20 @@ const resetQuotaUsed = async () => {
 
 // Show reset rate limit confirmation dialog (from edit modal)
 const confirmResetRateLimit = () => {
+  if (!isAdmin.value) return
   showResetRateLimitDialog.value = true
 }
 
 // Show reset rate limit confirmation dialog (from table row)
 const confirmResetRateLimitFromTable = (row: ApiKey) => {
+  if (!isAdmin.value) return
   selectedKey.value = row
   showResetRateLimitDialog.value = true
 }
 
 // Reset rate limit usage for an API key
 const resetRateLimitUsage = async () => {
+  if (!isAdmin.value) return
   if (!selectedKey.value) return
   showResetRateLimitDialog.value = false
   try {
@@ -1888,6 +1989,7 @@ onMounted(() => {
   loadGroups()
   loadUserGroupRates()
   loadPublicSettings()
+  loadUserOptions()
   document.addEventListener('click', closeGroupSelector)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })
