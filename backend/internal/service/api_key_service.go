@@ -169,6 +169,10 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+
+	// 管理员指定:Key 归属的目标用户。不填(由 handler fallback)则归属操作者本人。
+	// 仅 CreateAsAdmin 路径会使用它;普通 Create 路径忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -190,6 +194,9 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
+
+	// 管理员修改归属用户(nil = 不修改)。仅 UpdateAsAdmin 路径生效;普通 Update 忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // APIKeyService API Key服务
@@ -331,8 +338,18 @@ func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group 
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
-// Create 创建API Key
+// Create 创建API Key（归属由传入的 userID 决定，普通用户路径 userID 即调用者本人）。
 func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	return s.createAPIKey(ctx, userID, req, false)
+}
+
+// CreateAsAdmin 以管理员身份创建API Key：跳过「目标用户能否绑定分组」的校验，
+// 且跳过自定义 Key 的创建限流。归属 userID 由 handler 解析后传入（可能是目标用户而非管理员自己）。
+func (s *APIKeyService) CreateAsAdmin(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	return s.createAPIKey(ctx, userID, req, true)
+}
+
+func (s *APIKeyService) createAPIKey(ctx context.Context, userID int64, req CreateAPIKeyRequest, isAdmin bool) (*APIKey, error) {
 	// 验证用户存在
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -353,15 +370,14 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	// 验证分组权限（如果指定了分组）
+	// 验证分组权限（如果指定了分组）。管理员跳过：可把任意分组指定给任意用户的 Key。
 	if req.GroupID != nil {
 		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
 		if err != nil {
 			return nil, fmt.Errorf("get group: %w", err)
 		}
 
-		// 检查用户是否可以绑定该分组
-		if !s.canUserBindGroup(ctx, user, group) {
+		if !isAdmin && !s.canUserBindGroup(ctx, user, group) {
 			return nil, ErrGroupNotAllowed
 		}
 	}
@@ -370,9 +386,11 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 判断是否使用自定义Key
 	if req.CustomKey != nil && *req.CustomKey != "" {
-		// 检查限流（仅对自定义key进行限流）
-		if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
-			return nil, err
+		// 检查限流（仅对自定义key进行限流）。管理员代建跳过限流。
+		if !isAdmin {
+			if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
+				return nil, err
+			}
 		}
 
 		// 验证自定义Key格式
@@ -585,6 +603,14 @@ func (s *APIKeyService) updateAPIKey(ctx context.Context, id int64, userID int64
 		}
 
 		apiKey.GroupID = req.GroupID
+	}
+
+	// 管理员修改归属用户：校验目标用户存在后转移归属。普通用户路径忽略此字段。
+	if isAdmin && req.UserID != nil {
+		if _, err := s.userRepo.GetByID(ctx, *req.UserID); err != nil {
+			return nil, fmt.Errorf("get target user: %w", err)
+		}
+		apiKey.UserID = *req.UserID
 	}
 
 	if req.Status != nil {

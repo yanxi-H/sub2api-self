@@ -708,6 +708,10 @@ export default {
     searchPlaceholder: '搜索名称或Key...',
     searchPlaceholderAdmin: '搜索名称、Key、用户名、邮箱或用户ID...',
     ownerColumn: '所属用户',
+    ownerLabel: '归属用户',
+    selectOwner: '选择归属用户（留空则归属自己）',
+    searchUser: '搜索用户名或邮箱...',
+    ownerHint: '不选则该 Key 归属管理员自己',
     descriptionAdmin: '管理全系统 API 密钥和访问令牌',
     endpoints: {
       title: 'API 端点',

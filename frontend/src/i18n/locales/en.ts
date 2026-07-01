@@ -709,6 +709,10 @@ export default {
     searchPlaceholder: 'Search name or key...',
     searchPlaceholderAdmin: 'Search name, key, user, email or user ID...',
     ownerColumn: 'Owner',
+    ownerLabel: 'Owner',
+    selectOwner: 'Select owner (empty = yourself)',
+    searchUser: 'Search by username or email...',
+    ownerHint: 'Leave empty to assign to yourself',
     descriptionAdmin: 'Manage all API keys and access tokens across the system',
     endpoints: {
       title: 'API Endpoints',

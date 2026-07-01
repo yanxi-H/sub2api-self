@@ -470,6 +470,19 @@
         </div>
 
         <div>
+          <label class="input-label">{{ t('keys.ownerLabel') }}</label>
+          <Select
+            :model-value="formData.user_id"
+            :options="userOptions"
+            :placeholder="t('keys.selectOwner')"
+            :searchable="true"
+            :search-placeholder="t('keys.searchUser')"
+            @update:model-value="(v: string | number | boolean | null) => (formData.user_id = v === null ? null : Number(v))"
+          />
+          <p class="input-hint">{{ t('keys.ownerHint') }}</p>
+        </div>
+
+        <div>
           <label class="input-label">{{ t('keys.groupLabel') }}</label>
           <Select
             v-model="formData.group_id"
@@ -1316,6 +1329,7 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 
 const formData = ref({
   name: '',
+  user_id: null as number | null, // 管理员指定归属用户(null = 归属管理员自己)
   group_id: null as number | null,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
@@ -1406,6 +1420,21 @@ const groupOptions = computed(() =>
     platform: group.platform
   }))
 )
+
+// 归属用户下拉选项（管理员分配 Key 时使用）。仅管理员加载一次全量用户列表。
+const userOptions = ref<{ value: number; label: string }[]>([])
+const loadUserOptions = async () => {
+  if (!isAdmin.value || userOptions.value.length > 0) return
+  try {
+    const res = await adminAPI.users.list(1, 200, {})
+    userOptions.value = res.items.map((u) => ({
+      value: u.id,
+      label: `${u.username} (${u.email})`
+    }))
+  } catch (e) {
+    console.error('Failed to load user options:', e)
+  }
+}
 
 // Group dropdown search
 const groupSearchQuery = ref('')
@@ -1549,6 +1578,7 @@ const editKey = (key: ApiKey) => {
   const hasExpiration = !!key.expires_at
   formData.value = {
     name: key.name,
+    user_id: key.user_id ?? null,
     group_id: key.group_id,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
@@ -1720,6 +1750,10 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
+      // 管理员修改归属用户：仅当变更时才提交
+      if (formData.value.user_id !== null && formData.value.user_id !== selectedKey.value.user_id) {
+        updates.user_id = formData.value.user_id
+      }
       await keysAPI.update(selectedKey.value.id, updates)
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
@@ -1732,7 +1766,8 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        formData.value.user_id ?? undefined
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1778,6 +1813,7 @@ const closeModals = () => {
   selectedKey.value = null
   formData.value = {
     name: '',
+    user_id: null,
     group_id: null,
     status: 'active',
     use_custom_key: false,
@@ -1953,6 +1989,7 @@ onMounted(() => {
   loadGroups()
   loadUserGroupRates()
   loadPublicSettings()
+  loadUserOptions()
   document.addEventListener('click', closeGroupSelector)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })

@@ -74,6 +74,16 @@ vi.mock('@/api', () => ({
     getAvailable: getAvailableGroups,
     getUserGroupRates,
   },
+  adminAPI: {
+    users: { list: vi.fn().mockResolvedValue({ items: [] }) },
+    groups: {},
+  },
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    isAdmin: false,
+  }),
 }))
 
 vi.mock('@/stores/app', () => ({

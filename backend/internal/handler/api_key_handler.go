@@ -42,6 +42,9 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h *float64 `json:"rate_limit_5h"`
 	RateLimit1d *float64 `json:"rate_limit_1d"`
 	RateLimit7d *float64 `json:"rate_limit_7d"`
+
+	// 管理员指定：Key 归属的目标用户。仅管理员可使用；普通用户传入会被忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -60,6 +63,9 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
+
+	// 管理员修改：Key 的归属用户。仅管理员可使用；普通用户传入会被忽略。
+	UserID *int64 `json:"user_id"`
 }
 
 // List handles listing user's API keys with pagination
@@ -203,8 +209,21 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		svcReq.RateLimit7d = *req.RateLimit7d
 	}
 
+	// 解析目标归属用户：管理员指定了 user_id 则归属该用户，否则归属操作者本人。
+	isAdmin := isAdminRole(c)
+	targetUserID := subject.UserID
+	if isAdmin && req.UserID != nil {
+		targetUserID = *req.UserID
+	}
+
 	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
+		var key *service.APIKey
+		var err error
+		if isAdmin {
+			key, err = h.apiKeyService.CreateAsAdmin(ctx, targetUserID, svcReq)
+		} else {
+			key, err = h.apiKeyService.Create(ctx, targetUserID, svcReq)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -267,6 +286,11 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 			}
 			svcReq.ExpiresAt = &t
 		}
+	}
+
+	// 管理员修改归属用户：透传给 service，仅 UpdateAsAdmin 路径会使用。
+	if isAdminRole(c) && req.UserID != nil {
+		svcReq.UserID = req.UserID
 	}
 
 	if isAdminRole(c) {
