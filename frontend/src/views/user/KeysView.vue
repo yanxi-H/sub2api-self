@@ -867,6 +867,31 @@
                 {{ t('keys.resetRateLimitUsage') }}
               </button>
             </div>
+
+            <!-- 窗口起始时间对齐（编辑模式 + 已配置 7d 限额时显示） -->
+            <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="rounded-lg border border-gray-200 dark:border-dark-600 p-3 space-y-2">
+              <div class="text-sm font-medium text-gray-700 dark:text-dark-200">{{ t('keys.windowAlignTitle') }}</div>
+              <div class="text-xs text-gray-500 dark:text-dark-400">{{ t('keys.windowAlignHint') }}</div>
+              <div class="flex flex-wrap items-end gap-2">
+                <div class="flex-1 min-w-[180px]">
+                  <label class="input-label text-xs">{{ t('keys.window7dStart') }}</label>
+                  <input
+                    v-model="windowAlign.window_7d_start"
+                    type="datetime-local"
+                    class="input text-sm"
+                    :disabled="windowAlign.submitting"
+                  />
+                </div>
+                <button
+                  type="button"
+                  @click="applyWindowAlign"
+                  :disabled="windowAlign.submitting || !windowAlign.window_7d_start"
+                  class="btn btn-primary text-sm"
+                >
+                  {{ windowAlign.submitting ? t('common.saving') : t('keys.applyWindowAlign') }}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1165,6 +1190,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI, adminAPI } from '@/api'
+import { apiKeysAPI as apiKeysAdminAPI } from '@/api/admin'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -1382,6 +1408,13 @@ const formData = ref({
   enable_expiration: false,
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
   expiration_date: ''
+})
+
+// 速率限制窗口起始时间对齐（编辑模式下，管理员可手动对齐到 Codex 官方刷新周期）
+// 空字符串 = 不修改；填 RFC3339 时刻 = 把对应窗口起点设为该时刻（保留 usage）
+const windowAlign = ref({
+  window_7d_start: '' as string,
+  submitting: false as boolean
 })
 
 // 自定义Key验证
@@ -1934,6 +1967,38 @@ const resetRateLimitUsage = async () => {
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || t('keys.failedToResetRateLimit')
     appStore.showError(errorMsg)
+  }
+}
+
+// 仅调整速率限制窗口的起始时间（保留 usage 已用金额），用于对齐 Codex 官方账号刷新周期。
+const applyWindowAlign = async () => {
+  if (!isAdmin.value) return
+  if (!selectedKey.value) return
+  if (!windowAlign.value.window_7d_start) return
+
+  // datetime-local 是本地时区，转成 RFC3339（带时区偏移）
+  const local = new Date(windowAlign.value.window_7d_start)
+  if (isNaN(local.getTime())) {
+    appStore.showError(t('keys.windowAlignInvalidTime'))
+    return
+  }
+  windowAlign.value.submitting = true
+  try {
+    await apiKeysAdminAPI.setApiKeyWindowStart(selectedKey.value.id, {
+      window_7d_start: local.toISOString()
+    })
+    appStore.showSuccess(t('keys.windowAlignSuccess'))
+    windowAlign.value.window_7d_start = ''
+    await loadApiKeys()
+    const refreshedKey = apiKeys.value.find(k => k.id === selectedKey.value!.id)
+    if (refreshedKey) {
+      selectedKey.value = refreshedKey
+    }
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.detail || t('keys.windowAlignFailed')
+    appStore.showError(errorMsg)
+  } finally {
+    windowAlign.value.submitting = false
   }
 }
 

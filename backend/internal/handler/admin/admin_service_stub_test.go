@@ -660,6 +660,25 @@ func (s *stubAdminService) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 	return nil, service.ErrAPIKeyNotFound
 }
 
+func (s *stubAdminService) AdminSetAPIKeyWindowStart(ctx context.Context, keyID int64, w5h, w1d, w7d *time.Time) (*service.APIKey, error) {
+	for i := range s.apiKeys {
+		if s.apiKeys[i].ID == keyID {
+			if w5h != nil {
+				s.apiKeys[i].Window5hStart = w5h
+			}
+			if w1d != nil {
+				s.apiKeys[i].Window1dStart = w1d
+			}
+			if w7d != nil {
+				s.apiKeys[i].Window7dStart = w7d
+			}
+			k := s.apiKeys[i]
+			return &k, nil
+		}
+	}
+	return nil, service.ErrAPIKeyNotFound
+}
+
 func (s *stubAdminService) ResetAccountQuota(ctx context.Context, id int64) error {
 	return nil
 }

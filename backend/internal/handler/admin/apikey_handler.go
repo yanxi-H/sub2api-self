@@ -2,6 +2,7 @@ package admin
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -24,8 +25,11 @@ func NewAdminAPIKeyHandler(adminService service.AdminService) *AdminAPIKeyHandle
 
 // AdminUpdateAPIKeyGroupRequest represents the request to update an API key.
 type AdminUpdateAPIKeyGroupRequest struct {
-	GroupID             *int64 `json:"group_id"`               // nil=不修改, 0=解绑, >0=绑定到目标分组
-	ResetRateLimitUsage *bool  `json:"reset_rate_limit_usage"` // true=重置 5h/1d/7d 限速用量
+	GroupID             *int64  `json:"group_id"`               // nil=不修改, 0=解绑, >0=绑定到目标分组
+	ResetRateLimitUsage *bool   `json:"reset_rate_limit_usage"` // true=重置 5h/1d/7d 限速用量
+	Window5hStart       *string `json:"window_5h_start"`        // RFC3339;非空=把 5h 窗口起始对齐到该时刻(保留 usage)
+	Window1dStart       *string `json:"window_1d_start"`        // RFC3339;非空=把 1d 窗口起始对齐到该时刻(保留 usage)
+	Window7dStart       *string `json:"window_7d_start"`        // RFC3339;非空=把 7d 窗口起始对齐到该时刻(保留 usage)
 }
 
 // UpdateGroup handles updating an API key's admin-managed fields.
@@ -52,6 +56,41 @@ func (h *AdminAPIKeyHandler) UpdateGroup(c *gin.Context) {
 		}
 	}
 
+	// 仅调整窗口起始时间（保留 usage 已用金额），用于对齐 Codex 官方账号刷新周期
+	var w5h, w1d, w7d *time.Time
+	if req.Window5hStart != nil && *req.Window5hStart != "" {
+		t, parseErr := time.Parse(time.RFC3339, *req.Window5hStart)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid window_5h_start, expect RFC3339")
+			return
+		}
+		w5h = &t
+	}
+	if req.Window1dStart != nil && *req.Window1dStart != "" {
+		t, parseErr := time.Parse(time.RFC3339, *req.Window1dStart)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid window_1d_start, expect RFC3339")
+			return
+		}
+		w1d = &t
+	}
+	if req.Window7dStart != nil && *req.Window7dStart != "" {
+		t, parseErr := time.Parse(time.RFC3339, *req.Window7dStart)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid window_7d_start, expect RFC3339")
+			return
+		}
+		w7d = &t
+	}
+	var windowKey *service.APIKey
+	if w5h != nil || w1d != nil || w7d != nil {
+		windowKey, err = h.adminService.AdminSetAPIKeyWindowStart(c.Request.Context(), keyID, w5h, w1d, w7d)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+
 	result, err := h.adminService.AdminUpdateAPIKeyGroupID(c.Request.Context(), keyID, req.GroupID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -59,6 +98,10 @@ func (h *AdminAPIKeyHandler) UpdateGroup(c *gin.Context) {
 	}
 	if resetKey != nil && req.GroupID == nil {
 		result.APIKey = resetKey
+	}
+	// 窗口调整最后执行，确保返回的 Key 反映最新窗口（reset 与 window 互斥，不会同时出现）
+	if windowKey != nil {
+		result.APIKey = windowKey
 	}
 
 	resp := struct {

@@ -172,7 +172,9 @@ const DataTableStub = {
         <slot name="cell-key" :value="row.key" :row="row" />
         <slot name="cell-name" :value="row.name" :row="row" />
         <slot name="cell-group" :row="row" />
-        <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
+        <div data-test="current-concurrency">
+          <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
+        </div>
         <slot name="cell-rate_limit" :row="row" />
         <slot name="cell-actions" :row="row" />
       </div>

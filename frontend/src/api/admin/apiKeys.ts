@@ -26,8 +26,25 @@ export async function updateApiKeyGroup(id: number, groupId: number | null): Pro
   return data
 }
 
+export interface WindowStartOverride {
+  window_5h_start?: string // RFC3339;对齐 5h 窗口起始时刻（保留 usage）
+  window_1d_start?: string // RFC3339;对齐 1d 窗口起始时刻（保留 usage）
+  window_7d_start?: string // RFC3339;对齐 7d 窗口起始时刻（保留 usage）
+}
+
+/**
+ * 管理员：仅调整速率限制窗口的起始时间（保留 usage 已用金额）。
+ * 用于把 sub2api Key 的窗口起点对齐到 Codex 官方账号的真实刷新周期，
+ * 使 /v1/usage 返回的 reset_at 与官方账号一致。
+ */
+export async function setApiKeyWindowStart(id: number, override: WindowStartOverride): Promise<UpdateApiKeyGroupResult> {
+  const { data } = await apiClient.put<UpdateApiKeyGroupResult>(`/admin/api-keys/${id}`, override)
+  return data
+}
+
 export const apiKeysAPI = {
-  updateApiKeyGroup
+  updateApiKeyGroup,
+  setApiKeyWindowStart
 }
 
 export default apiKeysAPI

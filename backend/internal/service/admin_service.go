@@ -72,6 +72,10 @@ type AdminService interface {
 	// API Key management (admin)
 	AdminUpdateAPIKeyGroupID(ctx context.Context, keyID int64, groupID *int64) (*AdminUpdateAPIKeyGroupIDResult, error)
 	AdminResetAPIKeyRateLimitUsage(ctx context.Context, keyID int64) (*APIKey, error)
+	// AdminSetAPIKeyWindowStart 仅调整速率限制窗口的起始时间，保留 usage 已用金额。
+	// 用于把 sub2api Key 的窗口对齐到 Codex 官方账号的真实刷新周期。
+	// 任一 *time.Time 为 nil 表示该窗口不动。
+	AdminSetAPIKeyWindowStart(ctx context.Context, keyID int64, w5h, w1d, w7d *time.Time) (*APIKey, error)
 
 	// ReplaceUserGroup 替换用户的专属分组：授予新分组权限、迁移 Key、移除旧分组权限
 	ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*ReplaceUserGroupResult, error)
@@ -2549,7 +2553,42 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 	return apiKey, nil
 }
 
-// ReplaceUserGroup 替换用户的专属分组
+// AdminSetAPIKeyWindowStart 仅调整速率限制窗口的起始时间，保留 usage 已用金额。
+// 用途：把 sub2api Key 的窗口起点对齐到 Codex 官方账号真实刷新周期，
+//   使 /v1/usage 返回的 reset_at 与官方账号一致。
+// 任一参数为 nil 表示对应窗口不动。
+func (s *adminServiceImpl) AdminSetAPIKeyWindowStart(ctx context.Context, keyID int64, w5h, w1d, w7d *time.Time) (*APIKey, error) {
+	// 至少要有一个窗口被指定
+	if w5h == nil && w1d == nil && w7d == nil {
+		return nil, infraerrors.BadRequest("NO_WINDOW", "at least one of window_5h/1d/7d_start must be provided")
+	}
+
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	if w5h != nil {
+		apiKey.Window5hStart = w5h
+	}
+	if w1d != nil {
+		apiKey.Window1dStart = w1d
+	}
+	if w7d != nil {
+		apiKey.Window7dStart = w7d
+	}
+	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+		return nil, fmt.Errorf("set api key window start: %w", err)
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+	if s.billingCacheService != nil {
+		_ = s.billingCacheService.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
+	}
+	return apiKey, nil
+}
+
+
 func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*ReplaceUserGroupResult, error) {
 	if oldGroupID == newGroupID {
 		return nil, infraerrors.BadRequest("SAME_GROUP", "old and new group must be different")
