@@ -51,10 +51,14 @@ export async function getDetail(id: number): Promise<RequestArchiveDetail> {
   return data
 }
 
-export async function getStatus(): Promise<{ enabled: boolean }> {
-  const { data } = await apiClient.get<{ enabled: boolean }>('/admin/request-archive/status')
+export async function getStatus(): Promise<{ enabled: boolean; retention_days: number }> {
+  const { data } = await apiClient.get<{ enabled: boolean; retention_days: number }>('/admin/request-archive/status')
   return data
 }
 
-export const requestArchiveAPI = { list, getDetail, getStatus }
+export async function updateConfig(payload: { enabled?: boolean; retention_days?: number }): Promise<void> {
+  await apiClient.put('/admin/request-archive/config', payload)
+}
+
+export const requestArchiveAPI = { list, getDetail, getStatus, updateConfig }
 export default requestArchiveAPI

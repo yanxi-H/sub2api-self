@@ -31,9 +31,36 @@
         </div>
       </template>
 
-      <!-- 状态提示 -->
-      <div v-if="!enabled" class="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-        {{ t('admin.requestArchive.disabledHint') }}
+      <!-- 存档开关配置 -->
+      <div class="mb-4 rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.requestArchive.configTitle') }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.requestArchive.configHint') }}</p>
+          </div>
+          <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-gray-500">{{ t('admin.requestArchive.retentionDays') }}</label>
+              <input
+                v-model.number="retentionDays"
+                type="number"
+                min="1"
+                max="365"
+                class="input h-8 w-20 text-sm"
+                :disabled="configSaving"
+              />
+              <span class="text-xs text-gray-400">{{ t('admin.requestArchive.days') }}</span>
+            </div>
+            <button
+              type="button"
+              :class="['relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors', enabled ? 'bg-emerald-500' : 'bg-gray-200 dark:bg-dark-600']"
+              :disabled="configSaving"
+              @click="toggleEnabled"
+            >
+              <span :class="['pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition', enabled ? 'translate-x-4' : 'translate-x-0']" />
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 表格 -->
@@ -123,6 +150,8 @@ const pageSize = ref(20)
 const loading = ref(false)
 const searchQuery = ref('')
 const enabled = ref(false)
+const retentionDays = ref(30)
+const configSaving = ref(false)
 const detailDialog = ref(false)
 const detail = ref<RequestArchiveDetail | null>(null)
 const dateFilter = ref({ start: '', end: '' })
@@ -159,8 +188,22 @@ async function loadStatus() {
   try {
     const resp = await requestArchiveAPI.getStatus()
     enabled.value = resp.enabled
+    retentionDays.value = resp.retention_days || 30
   } catch {
     enabled.value = false
+  }
+}
+
+async function toggleEnabled() {
+  configSaving.value = true
+  const prev = enabled.value
+  enabled.value = !enabled.value
+  try {
+    await requestArchiveAPI.updateConfig({ enabled: enabled.value, retention_days: retentionDays.value })
+  } catch {
+    enabled.value = prev
+  } finally {
+    configSaving.value = false
   }
 }
 

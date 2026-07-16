@@ -249,9 +249,13 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	contentModerationHandler := admin.NewContentModerationHandler(contentModerationService)
 	requestArchiveRepo := repository.NewRequestArchiveRepository(db)
 	requestArchiveService := service.NewRequestArchiveService(requestArchiveRepo, func() service.RequestArchiveConfig {
-		return service.RequestArchiveConfig{Enabled: false, RetentionDays: 30}
+		ctx := context.Background()
+		return service.RequestArchiveConfig{
+			Enabled:       settingService.GetRequestArchiveEnabled(ctx),
+			RetentionDays: settingService.GetRequestArchiveRetentionDays(ctx),
+		}
 	})
-	requestArchiveHandler := admin.NewRequestArchiveHandler(requestArchiveService)
+	requestArchiveHandler := admin.NewRequestArchiveHandler(requestArchiveService, settingService)
 	paymentHandler := admin.NewPaymentHandler(paymentService, paymentConfigService)
 	affiliateHandler := admin.NewAffiliateHandler(affiliateService, adminService)
 	complianceHandler := admin.NewComplianceHandler(settingService)

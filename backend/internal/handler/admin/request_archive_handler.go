@@ -12,12 +12,13 @@ import (
 
 // RequestArchiveHandler 请求文本存档的管理后台接口。
 type RequestArchiveHandler struct {
-	svc *service.RequestArchiveService
+	svc            *service.RequestArchiveService
+	settingService *service.SettingService
 }
 
 // NewRequestArchiveHandler 创建请求存档 handler。
-func NewRequestArchiveHandler(svc *service.RequestArchiveService) *RequestArchiveHandler {
-	return &RequestArchiveHandler{svc: svc}
+func NewRequestArchiveHandler(svc *service.RequestArchiveService, settingService *service.SettingService) *RequestArchiveHandler {
+	return &RequestArchiveHandler{svc: svc, settingService: settingService}
 }
 
 // requestArchiveListResponse 列表项(含分页)。
@@ -134,9 +135,53 @@ func (h *RequestArchiveHandler) GetDetail(c *gin.Context) {
 
 // GetStatus handles GET /api/v1/admin/request-archive/status
 func (h *RequestArchiveHandler) GetStatus(c *gin.Context) {
+	enabled := h.svc.IsEnabled()
+	retention := 30
+	if h.settingService != nil {
+		retention = h.settingService.GetRequestArchiveRetentionDays(c.Request.Context())
+	}
 	response.Success(c, gin.H{
-		"enabled": h.svc.IsEnabled(),
+		"enabled":        enabled,
+		"retention_days": retention,
 	})
+}
+
+// UpdateConfig handles PUT /api/v1/admin/request-archive/config
+// body: { "enabled": true, "retention_days": 30 }
+func (h *RequestArchiveHandler) UpdateConfig(c *gin.Context) {
+	if h.settingService == nil {
+		response.InternalError(c, "setting service unavailable")
+		return
+	}
+	var req struct {
+		Enabled       *bool `json:"enabled"`
+		RetentionDays *int  `json:"retention_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	ctx := c.Request.Context()
+	if req.Enabled != nil {
+		if err := h.settingService.SetRequestArchiveEnabled(ctx, *req.Enabled); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+	if req.RetentionDays != nil {
+		days := *req.RetentionDays
+		if days < 1 {
+			days = 1
+		}
+		if days > 365 {
+			days = 365
+		}
+		if err := h.settingService.SetRequestArchiveRetentionDays(ctx, days); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+	response.Success(c, gin.H{"ok": true})
 }
 
 func (h *RequestArchiveHandler) repo() service.RequestArchiveRepository {

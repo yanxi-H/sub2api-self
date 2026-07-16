@@ -153,6 +153,7 @@ func registerContentModerationRoutes(admin *gin.RouterGroup, h *handler.Handlers
 		archive.GET("", h.Admin.RequestArchive.List)
 		archive.GET("/:id", h.Admin.RequestArchive.GetDetail)
 		archive.GET("/status", h.Admin.RequestArchive.GetStatus)
+		archive.PUT("/config", h.Admin.RequestArchive.UpdateConfig)
 	}
 }
 
