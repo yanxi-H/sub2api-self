@@ -229,50 +229,6 @@ func parseAuditLogRetentionDays(value string) int {
 	return n
 }
 
-// GetRequestArchiveEnabled 获取请求文本存档总开关(默认关)。
-func (s *SettingService) GetRequestArchiveEnabled(ctx context.Context) bool {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyRequestArchiveEnabled)
-	if err != nil {
-		return false
-	}
-	value = strings.TrimSpace(strings.ToLower(value))
-	return value == "true" || value == "1"
-}
-
-// SetRequestArchiveEnabled 设置请求文本存档总开关。
-func (s *SettingService) SetRequestArchiveEnabled(ctx context.Context, enabled bool) error {
-	val := "false"
-	if enabled {
-		val = "true"
-	}
-	return s.settingRepo.Set(ctx, SettingKeyRequestArchiveEnabled, val)
-}
-
-// GetRequestArchiveRetentionDays 获取请求存档保留天数(默认 30)。
-func (s *SettingService) GetRequestArchiveRetentionDays(ctx context.Context) int {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyRequestArchiveRetentionDays)
-	if err != nil {
-		return 30
-	}
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 30
-	}
-	n, err := strconv.Atoi(value)
-	if err != nil || n <= 0 {
-		return 30
-	}
-	return n
-}
-
-// SetRequestArchiveRetentionDays 设置请求存档保留天数。
-func (s *SettingService) SetRequestArchiveRetentionDays(ctx context.Context, days int) error {
-	if days < 1 {
-		days = 1
-	}
-	return s.settingRepo.Set(ctx, SettingKeyRequestArchiveRetentionDays, strconv.Itoa(days))
-}
-
 // GetSiteName 获取网站名称
 func (s *SettingService) GetSiteName(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)

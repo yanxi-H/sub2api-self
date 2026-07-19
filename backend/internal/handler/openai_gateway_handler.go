@@ -34,7 +34,6 @@ type OpenAIGatewayHandler struct {
 	usageRecordWorkerPool      *service.UsageRecordWorkerPool
 	errorPassthroughService    *service.ErrorPassthroughService
 	contentModerationService   *service.ContentModerationService
-	requestArchiveService      *service.RequestArchiveService
 	securityAuditCoordinator   *securityaudit.Coordinator
 	grokMediaEligibilityProber grokMediaEligibilityProber
 	opsService                 *service.OpsService
@@ -46,11 +45,6 @@ type OpenAIGatewayHandler struct {
 
 type grokMediaEligibilityProber interface {
 	ProbeMediaEligibility(ctx context.Context, accountID int64) (bool, string, error)
-}
-
-// SetRequestArchiveService 注入请求存档服务(可选,延迟注入避免循环依赖)。
-func (h *OpenAIGatewayHandler) SetRequestArchiveService(svc *service.RequestArchiveService) {
-	h.requestArchiveService = svc
 }
 
 const maxOpenAIFirstOutputTimeoutSwitches = 1
@@ -288,7 +282,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.openAISecurityAuditError(c, decision)
 		return
 	}
-	h.archiveRequestForOpenAI(c, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body)
 
 	// 使用 IsExplicitImageGenerationIntent 排除被动 image_gen namespace 声明。
 	// Codex 在所有请求中被动声明 image_gen namespace，宽泛检测会导致禁了生图的
@@ -872,7 +865,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicSecurityAuditError(c, decision)
 		return
 	}
-	h.archiveRequestForOpenAI(c, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body)
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
